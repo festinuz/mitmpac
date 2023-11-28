@@ -136,6 +136,9 @@ func pacHandlerWithID(w http.ResponseWriter, r *http.Request) {
 }
 
 func getClientIP(r *http.Request) string {
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		return realIP
+        }
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
