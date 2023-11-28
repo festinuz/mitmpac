@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -21,6 +22,7 @@ const (
 type ConfigHolder struct {
 	content []byte
 	conn    *websocket.Conn
+	mutex   sync.Mutex
 }
 
 var configs map[string]*ConfigHolder
@@ -130,7 +132,7 @@ func pacHandlerWithID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript")
 	w.Write(configHolder.content)
 
-	sendMessageToSocket(configHolder.conn, fmt.Sprintf("Config accessed by %s", clientIP))
+	sendMessageToSocket(configHolder, fmt.Sprintf("Config accessed by %s", clientIP))
 }
 
 func getClientIP(r *http.Request) string {
@@ -141,11 +143,13 @@ func getClientIP(r *http.Request) string {
 	return ip
 }
 
-func sendMessageToSocket(conn *websocket.Conn, message string) {
-	if conn == nil {
+func sendMessageToSocket(holder *ConfigHolder, message string) {
+	if holder.conn == nil {
 		return
 	}
-	err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+	holder.mutex.Lock()
+	defer holder.mutex.Unlock()
+	err := holder.conn.WriteMessage(websocket.TextMessage, []byte(message))
 	if err != nil {
 		fmt.Printf("Failed to send message to websocket: %v\n", err)
 	}
