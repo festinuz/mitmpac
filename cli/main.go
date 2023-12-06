@@ -14,21 +14,28 @@ import (
 )
 
 const (
-	uploadURL    = "http://127.0.0.1:8008/upload"
-	wsURL        = "ws://127.0.0.1:8008/ws"
-	pacURLFormat = "http://127.0.0.1:8008/pac/%s"
-	pacFormat    = `function FindProxyForURL(url, host) {
-    return "PROXY %s:8080";
+	uploadURL        = "http://127.0.0.1:8008/upload"
+	wsURL            = "ws://127.0.0.1:8008/ws"
+	pacURLFormat     = "http://127.0.0.1:8008/pac/%s"
+	defaultProxyPort = "8080"
+	pacFormat        = `function FindProxyForURL(url, host) {
+    return "PROXY %s:%s";
 }`
 )
 
 func main() {
 	secret := flag.String("secret", "", "unique secret value to identify the user")
+	port := flag.String("port", "", "target port of proxy")
 	flag.Parse()
 
 	if *secret == "" {
 		fmt.Println("Please provide a unique secret value with --secret")
 		return
+	}
+
+	proxyPort := defaultProxyPort
+	if *port != "" {
+		proxyPort = *port
 	}
 
 	ip := getLocalIP()
@@ -41,7 +48,9 @@ func main() {
 	fmt.Printf("Network name: %s\n", networkName)
 	fmt.Printf("Local IP: %s\n", ip)
 
-	pacContent := fmt.Sprintf(pacFormat, ip)
+	pacContent := fmt.Sprintf(pacFormat, ip, proxyPort)
+
+	fmt.Printf("Generated PAC configuration: \n\n%s\n\n", pacContent)
 
 	configID, err := uploadPAC(pacContent, *secret)
 	if err != nil {
