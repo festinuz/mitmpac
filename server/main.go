@@ -41,12 +41,20 @@ func NewConfigsHolder() *ConfigsHolder {
 }
 
 func (ch *ConfigsHolder) add(id string, config *ConfigHolder) error {
-	if config, exists := ch.configs[id]; exists && config.conn != nil {
-		return fmt.Errorf("Active config for the same secret already exists")
+	confExists := false
+	if config, exists := ch.configs[id]; exists {
+		confExists = true
+		if config.conn != nil {
+			return fmt.Errorf("Active config for the same secret already exists")
+		}
 	}
 	ch.configs[id] = config
-	fmt.Printf("Added config for %s\n", id)
-	ch.activeConfigs += 1
+	if !confExists {
+		fmt.Println("Added config for ", id)
+		ch.activeConfigs += 1
+	} else {
+		fmt.Println("Replaced config for ", id)
+	}
 	middlewares.ActiveConfigs.Set(float64(ch.activeConfigs))
 	return nil
 }
@@ -65,7 +73,7 @@ func (ch *ConfigsHolder) delete(id string) {
 		configHolder.conn.Close()
 	}
 	delete(ch.configs, id)
-	fmt.Printf("Deleted config for %s\n", id)
+	fmt.Println("Deleted config for ", id)
 	ch.activeConfigs -= 1
 	middlewares.ActiveConfigs.Set(float64(ch.activeConfigs))
 }
@@ -146,7 +154,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	configHolder := configs.get(id)
 	if configHolder != nil {
 		configHolder.conn = conn
-		fmt.Printf("Websocket connection for %s\n", id)
+		fmt.Println("Websocket connection for ", id)
 		defer configs.delete(id)
 	} else {
 		conn.WriteMessage(websocket.TextMessage, []byte("Invalid X-Secret"))
