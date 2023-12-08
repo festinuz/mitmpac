@@ -41,7 +41,7 @@ func NewConfigsHolder() *ConfigsHolder {
 }
 
 func (ch *ConfigsHolder) add(id string, config *ConfigHolder) error {
-	if _, exists := ch.configs[id]; exists {
+	if config, exists := ch.configs[id]; exists && config.conn != nil {
 		return fmt.Errorf("Active config for the same secret already exists")
 	}
 	ch.configs[id] = config
