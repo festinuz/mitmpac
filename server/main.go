@@ -29,11 +29,52 @@ type ConfigHolder struct {
 	mutex   sync.Mutex
 }
 
-var configs map[string]*ConfigHolder
+type ConfigsHolder struct {
+	configs       map[string]*ConfigHolder
+	activeConfigs int
+}
+
+func NewConfigsHolder() *ConfigsHolder {
+	return &ConfigsHolder{
+		configs: make(map[string]*ConfigHolder),
+	}
+}
+
+func (ch *ConfigsHolder) add(id string, config *ConfigHolder) error {
+	if _, exists := ch.configs[id]; exists {
+		return fmt.Errorf("Active config for the same secret already exists")
+	}
+	ch.configs[id] = config
+	fmt.Printf("Added config for %s\n", id)
+	ch.activeConfigs += 1
+	middlewares.ActiveConfigs.Set(float64(ch.activeConfigs))
+	return nil
+}
+
+func (ch *ConfigsHolder) get(id string) *ConfigHolder {
+	config, ok := ch.configs[id]
+	if !ok {
+		return nil
+	}
+	return config
+}
+
+func (ch *ConfigsHolder) delete(id string) {
+	configHolder, ok := ch.configs[id]
+	if ok && configHolder.conn != nil {
+		configHolder.conn.Close()
+	}
+	delete(ch.configs, id)
+	fmt.Printf("Deleted config for %s\n", id)
+	ch.activeConfigs -= 1
+	middlewares.ActiveConfigs.Set(float64(ch.activeConfigs))
+}
+
+var configs *ConfigsHolder
 var upgrader = websocket.Upgrader{}
 
 func main() {
-	configs = make(map[string]*ConfigHolder)
+	configs = NewConfigsHolder()
 
 	router := chi.NewRouter()
 
@@ -74,14 +115,14 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing X-Secret header", http.StatusBadRequest)
 		return
 	}
-	fmt.Println("Secret", secret)
 
 	id := generateID(secret)
-	configs[id] = &ConfigHolder{
-		content: content,
+	err = configs.add(id, &ConfigHolder{content: content})
+	if err != nil {
+		http.Error(w, err.Error(), 409)
+		return
 	}
 
-	fmt.Printf("Uploaded PAC for %s\n", id)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(id))
 }
@@ -99,15 +140,14 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 		return
 	}
-	fmt.Println("Secret", secret)
 
 	id := generateID(secret)
 
-	configHolder, ok := configs[id]
-	if ok {
+	configHolder := configs.get(id)
+	if configHolder != nil {
 		configHolder.conn = conn
 		fmt.Printf("Websocket connection for %s\n", id)
-		defer deleteConfig(id)
+		defer configs.delete(id)
 	} else {
 		conn.WriteMessage(websocket.TextMessage, []byte("Invalid X-Secret"))
 		conn.Close()
@@ -133,8 +173,8 @@ func pacHandlerWithID(w http.ResponseWriter, r *http.Request) {
 	clientIP := getClientIP(r)
 	fmt.Printf("Config %s accessed by %s %s\n", id, clientIP, r.UserAgent())
 
-	configHolder, ok := configs[id]
-	if !ok {
+	config := configs.get(id)
+	if config == nil {
 		// If no config is found, return the DIRECT PAC content
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Write([]byte(directPacContent))
@@ -142,10 +182,10 @@ func pacHandlerWithID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/javascript")
-	w.Write(configHolder.content)
+	w.Write(config.content)
 
 	sendMessageToSocket(
-		configHolder,
+		config,
 		fmt.Sprintf("Config accessed by %s %s", clientIP, r.UserAgent()),
 	)
 }
@@ -171,13 +211,4 @@ func sendMessageToSocket(holder *ConfigHolder, message string) {
 	if err != nil {
 		fmt.Printf("Failed to send message to websocket: %v\n", err)
 	}
-}
-
-func deleteConfig(id string) {
-	configHolder, ok := configs[id]
-	if ok && configHolder.conn != nil {
-		configHolder.conn.Close()
-	}
-	delete(configs, id)
-	fmt.Printf("Deleted config for %s\n", id)
 }

@@ -43,6 +43,16 @@ var requestsTimings = promauto.NewSummaryVec(
 	[]string{"method", "handler"},
 )
 
+var ActiveConfigs = promauto.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "mitmpac_active_configs",
+		Help: "Active mitmpac configs served by the server",
+		ConstLabels: prometheus.Labels{
+			"hostname": getHostname(),
+		},
+	},
+)
+
 func setDefaultRouteMetrics(method string, path string) {
 	requestsProcessed.WithLabelValues(method, path, "200").Add(0)
 	requestsProcessed.WithLabelValues(method, path, "500").Add(0)
