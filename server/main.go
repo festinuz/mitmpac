@@ -10,13 +10,17 @@ import (
 	"strings"
 	"sync"
 
+	"mitmpac/server/middlewares"
+
+	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
 	directPacContent = `function FindProxyForURL(url, host) {
-        return "DIRECT";
-    }`
+    return "DIRECT";
+}`
 )
 
 type ConfigHolder struct {
@@ -31,12 +35,20 @@ var upgrader = websocket.Upgrader{}
 func main() {
 	configs = make(map[string]*ConfigHolder)
 
-	http.HandleFunc("/upload", uploadHandler)
-	http.HandleFunc("/ws", wsHandler)
-	http.HandleFunc("/pac/", pacHandlerWithID)
+	router := chi.NewRouter()
+
+	mitmpacHandlers := router.With(middlewares.MetricsMiddleware)
+
+	mitmpacHandlers.Post("/upload", uploadHandler)
+	mitmpacHandlers.Get("/ws", wsHandler)
+	mitmpacHandlers.Get("/pac/{pac_id}", pacHandlerWithID)
+
+	middlewares.SetDefaultRoutesMetrics(mitmpacHandlers.Routes())
+
+	router.Get("/metrics", promhttp.Handler().ServeHTTP)
 
 	fmt.Println("PAC server is listening on port 8008.")
-	http.ListenAndServe(":8008", nil)
+	http.ListenAndServe(":8008", router)
 }
 
 func generateID(secret string) string {
@@ -119,7 +131,7 @@ func pacHandlerWithID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clientIP := getClientIP(r)
-	fmt.Printf("Config %s accessed by %s\n", id, clientIP)
+	fmt.Printf("Config %s accessed by %s %s\n", id, clientIP, r.UserAgent())
 
 	configHolder, ok := configs[id]
 	if !ok {
@@ -132,13 +144,16 @@ func pacHandlerWithID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript")
 	w.Write(configHolder.content)
 
-	sendMessageToSocket(configHolder, fmt.Sprintf("Config accessed by %s", clientIP))
+	sendMessageToSocket(
+		configHolder,
+		fmt.Sprintf("Config accessed by %s %s", clientIP, r.UserAgent()),
+	)
 }
 
 func getClientIP(r *http.Request) string {
 	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
 		return realIP
-        }
+	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
